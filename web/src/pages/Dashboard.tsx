@@ -53,7 +53,27 @@ export default function Dashboard() {
           getStandings(leagueId!).catch(() => []),
           getCurrentWeek(leagueId!).catch(() => null),
         ]);
-        setStandings(Array.isArray(standingsData) ? standingsData : standingsData?.lines || []);
+        // Map API response shape to the flat SeasonLine[] the UI expects
+        const lines: SeasonLine[] = [];
+        if (standingsData?.seasonLines) {
+          const players: Record<string, string> = {};
+          if (standingsData.league && Array.isArray(standingsData.playerStandings)) {
+            // We don't have team→player mapping on seasonLines, so build it from players list if available
+          }
+          for (const sl of standingsData.seasonLines) {
+            lines.push({
+              team: sl.team_name ?? sl.team ?? '',
+              player_name: sl.player_name,
+              wins: sl.current_wins ?? sl.wins ?? 0,
+              losses: sl.current_losses ?? sl.losses ?? 0,
+              over_under_line: sl.over_under_line ?? 0,
+              over_under_diff: sl.overUnderDiff ?? sl.over_under_diff ?? 0,
+            });
+          }
+        } else if (Array.isArray(standingsData)) {
+          lines.push(...standingsData);
+        }
+        setStandings(lines);
         setWeek(weekData);
       } catch (err: any) {
         setError(err.message);
