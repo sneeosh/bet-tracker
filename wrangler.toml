@@ -1,0 +1,30 @@
+name = "bet-tracker"
+account_id = "cf750f8c640ce29841b5bc38221ea13d"
+main = "src/index.ts"
+compatibility_date = "2024-06-20"
+
+[triggers]
+# Sunday 10am CT (15:00 UTC) - send standings & prompt bet manager
+# Daily 6am CT (11:00 UTC) - check game results
+# 2 hours before first picked game - send pick reminder
+crons = [
+  "0 15 * * SUN",
+  "0 11 * * *"
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bet-tracker-db"
+database_id = "14c5cba3-b294-4f56-86b7-41106904765f"
+
+[ai]
+binding = "AI"
+
+[vars]
+TWILIO_PHONE_NUMBER = ""
+ENVIRONMENT = "development"
+
+# Set these as secrets via `wrangler secret put`:
+# TWILIO_ACCOUNT_SID
+# TWILIO_AUTH_TOKEN
+# ODDS_API_KEY

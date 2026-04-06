@@ -1,0 +1,22 @@
+{
+  "name": "bet-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute bet-tracker-db --local --file=./migrations/0001_initial.sql",
+    "db:migrate:remote": "wrangler d1 execute bet-tracker-db --remote --file=./migrations/0001_initial.sql",
+    "web:dev": "cd web && npm run dev",
+    "web:build": "cd web && npm run build"
+  },
+  "dependencies": {
+    "hono": "^4.4.0",
+    "twilio": "^5.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.60.0"
+  }
+}
