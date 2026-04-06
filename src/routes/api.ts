@@ -201,9 +201,16 @@ api.get('/api/leagues/:id/standings', async (c) => {
       getPlayersByLeague(c.env, leagueId),
     ]);
 
-    // Add over/under performance to each season line
+    // Build team→player mapping
+    const teamToPlayer: Record<string, string> = {};
+    for (const player of players) {
+      teamToPlayer[player.team_name] = player.name;
+    }
+
+    // Add over/under performance and player name to each season line
     const linesWithPerformance = seasonLines.map((line) => ({
       ...line,
+      player_name: teamToPlayer[line.team_name] ?? null,
       overUnderDiff: line.current_wins - line.over_under_line,
     }));
 

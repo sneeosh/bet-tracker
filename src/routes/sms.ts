@@ -14,12 +14,20 @@ import {
   getSeasonLines,
   getPicksByPlayer,
 } from '../db/queries';
-import { sendSms, broadcastSms, twimlResponse, parseTwilioBody } from '../services/sms';
+import { sendSms, broadcastSms, twimlResponse, parseTwilioBody, validateTwilioWebhook } from '../services/sms';
 import { parseMessage, formatGameList } from '../services/ai';
 
 const sms = new Hono<{ Bindings: Env }>();
 
 sms.post('/sms/webhook', async (c) => {
+  // Validate Twilio signature in production
+  if (c.env.ENVIRONMENT !== 'development') {
+    const isValid = await validateTwilioWebhook(c.req.raw, c.env);
+    if (!isValid) {
+      return c.text('Forbidden', 403);
+    }
+  }
+
   const formData = await c.req.formData();
   const { from, body } = parseTwilioBody(formData);
 
