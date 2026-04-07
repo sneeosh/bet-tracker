@@ -3,6 +3,7 @@ import Setup from "./pages/Setup";
 import Dashboard from "./pages/Dashboard";
 import Players from "./pages/Players";
 import Chat from "./pages/Chat";
+import AdminTools from "./pages/AdminTools";
 
 const styles: Record<string, React.CSSProperties> = {
   header: {
@@ -43,6 +44,7 @@ function LeagueNav() {
       <Link to={`/league/${id}`} style={styles.link}>Dashboard</Link>
       <Link to={`/league/${id}/players`} style={styles.link}>Players</Link>
       <Link to={`/league/${id}/chat`} style={styles.link}>Chat</Link>
+      <Link to={`/league/${id}/admin`} style={styles.link}>Admin Tools</Link>
     </>
   );
 }
@@ -65,6 +67,7 @@ export default function App() {
           <Route path="/league/:id" element={<Dashboard />} />
           <Route path="/league/:id/players" element={<Players />} />
           <Route path="/league/:id/chat" element={<Chat />} />
+          <Route path="/league/:id/admin" element={<AdminTools />} />
         </Routes>
       </main>
     </div>

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types';
 import api from './routes/api';
+import admin from './routes/admin';
 import sms from './routes/sms';
 import { handleSundayMorning, handleDailyResultCheck, handlePickReminder } from './services/scheduler';
 
@@ -15,6 +16,7 @@ app.get('/', (c) => c.json({ status: 'ok', service: 'bet-tracker' }));
 
 // Mount routes
 app.route('/', api);
+app.route('/', admin);
 app.route('/', sms);
 
 // Export for Cloudflare Workers
