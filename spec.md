@@ -48,6 +48,10 @@ Eventually we should extend this system to be more flexible to be any sports sea
 - **Season-long bet #1 (over/under)**: each player's team win total is tracked against the beginning-of-season over/under line. The player whose team most outperforms their line wins.
 - **Season-long bet #2 (total wins)**: raw team win totals compared across the 5 players. Most wins takes it.
 
+## Web Chat Interface
+
+A browser-based chat interface mirrors the SMS conversational flow for testing and as an alternative to text messaging. Users select their player identity and interact with the same conversation engine (AI parsing, game picking, pick submission) via a chat window. This allows full end-to-end testing without a Twilio connection.
+
 ## Data Sources
 
 - **MLB schedule & game results**: MLB Stats API (free, no auth required)

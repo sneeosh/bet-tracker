@@ -10,9 +10,24 @@ import {
   getCurrentWeek,
   getGamesForWeek,
   getPicksForWeek,
+  getPlayerByPhone,
+  getConversation,
 } from '../db/queries';
+import { handleMessage } from '../services/chat';
 
 const api = new Hono<{ Bindings: Env }>();
+
+// GET /api/leagues - List all leagues
+api.get('/api/leagues', async (c) => {
+  try {
+    const { results } = await c.env.DB
+      .prepare('SELECT * FROM leagues ORDER BY created_at DESC')
+      .all();
+    return c.json(results);
+  } catch (err) {
+    return c.json({ error: 'Failed to list leagues' }, 500);
+  }
+});
 
 // POST /api/leagues - Create a league
 api.post('/api/leagues', async (c) => {
@@ -264,6 +279,146 @@ api.get('/api/leagues/:id/standings', async (c) => {
     });
   } catch (err) {
     return c.json({ error: 'Failed to get standings' }, 500);
+  }
+});
+
+// GET /api/leagues/:id/fetch-lines - Fetch O/U lines from The Odds API
+api.get('/api/leagues/:id/fetch-lines', async (c) => {
+  try {
+    const leagueId = Number(c.req.param('id'));
+    const league = await getLeague(c.env, leagueId);
+    if (!league) return c.json({ error: 'League not found' }, 404);
+
+    const apiKey = c.env.ODDS_API_KEY;
+    if (!apiKey) return c.json({ error: 'ODDS_API_KEY not configured' }, 500);
+
+    // Try the win totals endpoint first
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${apiKey}&regions=us&markets=totals&oddsFormat=american`;
+    const sportsRes = await fetch(
+      `https://api.the-odds-api.com/v4/sports/?apiKey=${apiKey}`
+    );
+    const sports: any[] = await sportsRes.json();
+
+    // Look for an MLB win totals sport key
+    const winTotalsSport = sports.find(
+      (s: any) => s.key?.includes('baseball_mlb') && s.key?.includes('win')
+    );
+
+    let lines: { teamName: string; overUnderLine: number }[] = [];
+
+    if (winTotalsSport) {
+      // Fetch win totals odds
+      const oddsRes = await fetch(
+        `https://api.the-odds-api.com/v4/sports/${winTotalsSport.key}/odds/?apiKey=${apiKey}&regions=us&markets=totals&oddsFormat=american`
+      );
+      if (oddsRes.ok) {
+        const oddsData: any[] = await oddsRes.json();
+        for (const event of oddsData) {
+          const teamName = event.home_team || event.away_team;
+          // Get the first bookmaker's totals
+          const bookmaker = event.bookmakers?.[0];
+          const market = bookmaker?.markets?.find((m: any) => m.key === 'totals');
+          const overOutcome = market?.outcomes?.find((o: any) => o.name === 'Over');
+          if (teamName && overOutcome?.point) {
+            lines.push({ teamName, overUnderLine: overOutcome.point });
+          }
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      // Fallback: try outrights endpoint
+      const outrightsRes = await fetch(
+        `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${apiKey}&regions=us&markets=outrights&oddsFormat=american`
+      );
+      if (outrightsRes.ok) {
+        // Outrights won't have O/U lines, so report that
+        return c.json({
+          lines: [],
+          message: 'Win totals market not available. Enter lines manually.',
+          sports: sports
+            .filter((s: any) => s.key?.includes('baseball'))
+            .map((s: any) => s.key),
+        });
+      }
+    }
+
+    // Filter to teams in this league's division
+    const players = await getPlayersByLeague(c.env, leagueId);
+    const leagueTeams = players.map((p) => p.team_name);
+
+    // Try to match API team names to league team names
+    const matched: { teamName: string; overUnderLine: number }[] = [];
+    for (const line of lines) {
+      // Check exact match or partial match
+      const match = leagueTeams.find(
+        (t) => line.teamName.includes(t) || t.includes(line.teamName)
+      );
+      if (match) {
+        matched.push({ teamName: match, overUnderLine: line.overUnderLine });
+      }
+    }
+
+    return c.json({
+      lines: matched.length > 0 ? matched : lines,
+      allLines: lines,
+      message: matched.length > 0
+        ? `Found ${matched.length} matching lines`
+        : `Found ${lines.length} lines (no exact team matches for your division)`,
+    });
+  } catch (err) {
+    console.error('Fetch lines error:', err);
+    return c.json({ error: 'Failed to fetch odds' }, 500);
+  }
+});
+
+// POST /api/chat - Web chat endpoint (mirrors SMS flow)
+api.post('/api/chat', async (c) => {
+  try {
+    const { phone, message } = await c.req.json();
+
+    if (!phone || !message) {
+      return c.json({ error: 'phone and message are required' }, 400);
+    }
+
+    const player = await getPlayerByPhone(c.env, phone);
+    if (!player) {
+      return c.json({ error: 'Player not found for that phone number' }, 404);
+    }
+
+    const response = await handleMessage(c.env, player, message);
+
+    // Return current conversation state for the UI
+    const conversation = await getConversation(c.env, player.id);
+
+    return c.json({
+      response,
+      state: conversation?.state ?? 'idle',
+      playerName: player.name,
+    });
+  } catch (err) {
+    console.error('Chat error:', err);
+    return c.json({ error: 'Failed to process message' }, 500);
+  }
+});
+
+// GET /api/chat/state/:phone - Get current conversation state for a player
+api.get('/api/chat/state/:phone', async (c) => {
+  try {
+    const phone = decodeURIComponent(c.req.param('phone'));
+    const player = await getPlayerByPhone(c.env, phone);
+    if (!player) {
+      return c.json({ error: 'Player not found' }, 404);
+    }
+
+    const conversation = await getConversation(c.env, player.id);
+    return c.json({
+      playerName: player.name,
+      teamName: player.team_name,
+      state: conversation?.state ?? 'idle',
+    });
+  } catch (err) {
+    return c.json({ error: 'Failed to get state' }, 500);
   }
 });
 

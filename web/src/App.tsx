@@ -2,6 +2,7 @@ import { Routes, Route, Link, useParams } from "react-router-dom";
 import Setup from "./pages/Setup";
 import Dashboard from "./pages/Dashboard";
 import Players from "./pages/Players";
+import Chat from "./pages/Chat";
 
 const styles: Record<string, React.CSSProperties> = {
   header: {
@@ -41,6 +42,7 @@ function LeagueNav() {
     <>
       <Link to={`/league/${id}`} style={styles.link}>Dashboard</Link>
       <Link to={`/league/${id}/players`} style={styles.link}>Players</Link>
+      <Link to={`/league/${id}/chat`} style={styles.link}>Chat</Link>
     </>
   );
 }
@@ -62,6 +64,7 @@ export default function App() {
           <Route path="/" element={<Setup />} />
           <Route path="/league/:id" element={<Dashboard />} />
           <Route path="/league/:id/players" element={<Players />} />
+          <Route path="/league/:id/chat" element={<Chat />} />
         </Routes>
       </main>
     </div>

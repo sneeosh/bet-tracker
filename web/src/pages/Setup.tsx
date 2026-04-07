@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { createLeague } from "../api";
+import { useState, useEffect } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { createLeague, getLeagues } from "../api";
 
 const styles: Record<string, React.CSSProperties> = {
   section: { marginBottom: "32px" },
@@ -18,11 +18,37 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "14px",
   },
   error: { color: "red", fontSize: "13px" },
+  leagueList: { listStyle: "none", padding: 0, margin: 0 },
+  leagueItem: {
+    padding: "12px",
+    borderBottom: "1px solid #eee",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  leagueLink: {
+    color: "#1a1a2e",
+    textDecoration: "none",
+    fontWeight: 600,
+    fontSize: "15px",
+  },
+  leagueMeta: { color: "#888", fontSize: "13px" },
 };
+
+interface League {
+  id: number;
+  name: string;
+  sport: string;
+  division: string;
+  season: number;
+}
 
 export default function Setup() {
   const navigate = useNavigate();
   const currentYear = new Date().getFullYear();
+
+  const [leagues, setLeagues] = useState<League[]>([]);
+  const [loadingLeagues, setLoadingLeagues] = useState(true);
 
   const [name, setName] = useState("");
   const [season, setSeason] = useState(currentYear);
@@ -30,7 +56,12 @@ export default function Setup() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  const [existingId, setExistingId] = useState("");
+  useEffect(() => {
+    getLeagues()
+      .then((data) => setLeagues(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoadingLeagues(false));
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -46,15 +77,30 @@ export default function Setup() {
     }
   }
 
-  function handleGoToLeague(e: React.FormEvent) {
-    e.preventDefault();
-    if (existingId.trim()) {
-      navigate(`/league/${existingId.trim()}`);
-    }
-  }
-
   return (
     <div>
+      <section style={styles.section}>
+        <h2 style={styles.heading}>Your Leagues</h2>
+        {loadingLeagues ? (
+          <p style={styles.leagueMeta}>Loading...</p>
+        ) : leagues.length === 0 ? (
+          <p style={styles.leagueMeta}>No leagues yet. Create one below.</p>
+        ) : (
+          <ul style={styles.leagueList}>
+            {leagues.map((l) => (
+              <li key={l.id} style={styles.leagueItem}>
+                <Link to={`/league/${l.id}`} style={styles.leagueLink}>
+                  {l.name}
+                </Link>
+                <span style={styles.leagueMeta}>
+                  {l.division} &middot; {l.season}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section style={styles.section}>
         <h2 style={styles.heading}>Create a New League</h2>
         <form onSubmit={handleCreate} style={styles.form}>
@@ -91,21 +137,6 @@ export default function Setup() {
             {creating ? "Creating..." : "Create League"}
           </button>
           {error && <p style={styles.error}>{error}</p>}
-        </form>
-      </section>
-
-      <section style={styles.section}>
-        <h2 style={styles.heading}>Go to Existing League</h2>
-        <form onSubmit={handleGoToLeague} style={{ ...styles.form, flexDirection: "row" as const }}>
-          <input
-            style={{ ...styles.input, flex: 1 }}
-            value={existingId}
-            onChange={(e) => setExistingId(e.target.value)}
-            placeholder="Enter league ID"
-          />
-          <button style={styles.button} type="submit">
-            Go
-          </button>
         </form>
       </section>
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { getStandings, getCurrentWeek } from "../api";
+import { getStandings, getCurrentWeek, getPlayers, setSeasonLines } from "../api";
 
 const styles: Record<string, React.CSSProperties> = {
   section: { marginBottom: "32px" },
@@ -44,46 +44,105 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  // Season lines form state
+  const [playerTeams, setPlayerTeams] = useState<{ name: string; team_name: string }[]>([]);
+  const [lineInputs, setLineInputs] = useState<Record<string, string>>({});
+  const [savingLines, setSavingLines] = useState(false);
+  const [linesSaved, setLinesSaved] = useState(false);
+  const [fetchingLines, setFetchingLines] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState("");
+
+  async function loadDashboard() {
     if (!leagueId) return;
+    try {
+      const [standingsData, weekData, playersData] = await Promise.all([
+        getStandings(leagueId).catch(() => null),
+        getCurrentWeek(leagueId).catch(() => null),
+        getPlayers(leagueId).catch(() => []),
+      ]);
 
-    async function load() {
-      try {
-        const [standingsData, weekData] = await Promise.all([
-          getStandings(leagueId!).catch(() => []),
-          getCurrentWeek(leagueId!).catch(() => null),
-        ]);
-        // Map API response shape to the flat SeasonLine[] the UI expects
-        const lines: SeasonLine[] = [];
-        if (standingsData?.seasonLines) {
-          const players: Record<string, string> = {};
-          if (standingsData.league && Array.isArray(standingsData.playerStandings)) {
-            // We don't have team→player mapping on seasonLines, so build it from players list if available
-          }
-          for (const sl of standingsData.seasonLines) {
-            lines.push({
-              team: sl.team_name ?? sl.team ?? '',
-              player_name: sl.player_name,
-              wins: sl.current_wins ?? sl.wins ?? 0,
-              losses: sl.current_losses ?? sl.losses ?? 0,
-              over_under_line: sl.over_under_line ?? 0,
-              over_under_diff: sl.overUnderDiff ?? sl.over_under_diff ?? 0,
-            });
-          }
-        } else if (Array.isArray(standingsData)) {
-          lines.push(...standingsData);
+      const teams = (Array.isArray(playersData) ? playersData : []).map((p: any) => ({
+        name: p.name,
+        team_name: p.team_name,
+      }));
+      setPlayerTeams(teams);
+
+      const lines: SeasonLine[] = [];
+      if (standingsData?.seasonLines) {
+        for (const sl of standingsData.seasonLines) {
+          lines.push({
+            team: sl.team_name ?? sl.team ?? '',
+            player_name: sl.player_name,
+            wins: sl.current_wins ?? sl.wins ?? 0,
+            losses: sl.current_losses ?? sl.losses ?? 0,
+            over_under_line: sl.over_under_line ?? 0,
+            over_under_diff: sl.overUnderDiff ?? sl.over_under_diff ?? 0,
+          });
         }
-        setStandings(lines);
-        setWeek(weekData);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+        // Pre-fill line inputs from existing data
+        const existing: Record<string, string> = {};
+        for (const sl of standingsData.seasonLines) {
+          existing[sl.team_name] = String(sl.over_under_line);
+        }
+        setLineInputs((prev) => ({ ...existing, ...prev }));
       }
+      setStandings(lines);
+      setWeek(weekData);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    load();
+  useEffect(() => {
+    loadDashboard();
   }, [leagueId]);
+
+  async function handleFetchLines() {
+    if (!leagueId) return;
+    setFetchingLines(true);
+    setFetchMsg("");
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}/fetch-lines`);
+      const data = await res.json();
+      if (data.lines && data.lines.length > 0) {
+        const updated: Record<string, string> = { ...lineInputs };
+        for (const line of data.lines) {
+          updated[line.teamName] = String(line.overUnderLine);
+        }
+        setLineInputs(updated);
+      }
+      setFetchMsg(data.message || (data.lines?.length ? "Lines fetched!" : "No lines found."));
+    } catch {
+      setFetchMsg("Failed to fetch from odds API.");
+    } finally {
+      setFetchingLines(false);
+    }
+  }
+
+  async function handleSaveLines(e: React.FormEvent) {
+    e.preventDefault();
+    if (!leagueId) return;
+    setSavingLines(true);
+    setLinesSaved(false);
+    try {
+      const lines = playerTeams
+        .filter((pt) => lineInputs[pt.team_name])
+        .map((pt) => ({
+          teamName: pt.team_name,
+          overUnderLine: parseFloat(lineInputs[pt.team_name]),
+        }));
+      if (lines.length === 0) return;
+      await setSeasonLines(leagueId, { lines });
+      setLinesSaved(true);
+      await loadDashboard();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingLines(false);
+    }
+  }
 
   if (loading) return <p>Loading dashboard...</p>;
   if (error) return <p style={styles.error}>{error}</p>;
@@ -155,6 +214,80 @@ export default function Dashboard() {
               </tbody>
             </table>
           </>
+        )}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.heading}>Season Lines</h2>
+        {playerTeams.length === 0 ? (
+          <p style={styles.empty}>Add players first to set season lines.</p>
+        ) : (
+          <form onSubmit={handleSaveLines}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Team</th>
+                  <th style={styles.th}>Player</th>
+                  <th style={styles.th}>O/U Line</th>
+                </tr>
+              </thead>
+              <tbody>
+                {playerTeams.map((pt) => (
+                  <tr key={pt.team_name}>
+                    <td style={styles.td}>{pt.team_name}</td>
+                    <td style={styles.td}>{pt.name}</td>
+                    <td style={styles.td}>
+                      <input
+                        type="number"
+                        step="0.5"
+                        placeholder="e.g. 82.5"
+                        value={lineInputs[pt.team_name] ?? ""}
+                        onChange={(e) =>
+                          setLineInputs((prev) => ({ ...prev, [pt.team_name]: e.target.value }))
+                        }
+                        style={{ padding: "6px 8px", width: "90px", border: "1px solid #ccc", borderRadius: "4px", fontSize: "14px" }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                type="submit"
+                disabled={savingLines}
+                style={{
+                  padding: "8px 16px",
+                  background: "#1a1a2e",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+              >
+                {savingLines ? "Saving..." : "Save Lines"}
+              </button>
+              <button
+                type="button"
+                onClick={handleFetchLines}
+                disabled={fetchingLines}
+                style={{
+                  padding: "8px 16px",
+                  background: "#fff",
+                  color: "#1a1a2e",
+                  border: "1px solid #1a1a2e",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+              >
+                {fetchingLines ? "Fetching..." : "Fetch from Odds API"}
+              </button>
+              {linesSaved && <span style={{ color: "green", fontSize: "13px" }}>Saved!</span>}
+              {fetchMsg && <span style={{ color: "#555", fontSize: "13px" }}>{fetchMsg}</span>}
+            </div>
+          </form>
         )}
       </section>
 

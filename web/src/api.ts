@@ -12,6 +12,10 @@ async function request(path: string, options?: RequestInit) {
   return res.json();
 }
 
+export function getLeagues() {
+  return request("/leagues");
+}
+
 export function createLeague(data: { name: string; season: number; division: string }) {
   return request("/leagues", { method: "POST", body: JSON.stringify(data) });
 }
@@ -28,7 +32,14 @@ export function addPlayer(
   leagueId: string,
   data: { name: string; phone: string; team_name: string; rotation_order: number; is_admin: boolean }
 ) {
-  return request(`/leagues/${leagueId}/players`, { method: "POST", body: JSON.stringify(data) });
+  const payload = {
+    name: data.name,
+    phone: data.phone,
+    teamName: data.team_name,
+    rotationOrder: data.rotation_order,
+    isAdmin: data.is_admin,
+  };
+  return request(`/leagues/${leagueId}/players`, { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function getSeasonLines(leagueId: string) {
