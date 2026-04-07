@@ -57,3 +57,67 @@ export function getStandings(leagueId: string) {
 export function getCurrentWeek(leagueId: string) {
   return request(`/leagues/${leagueId}/current-week`);
 }
+
+// ─── Admin Testing Tools ────────────────────────────────────────────────────
+
+export function getWeeks(leagueId: string) {
+  return request(`/admin/leagues/${leagueId}/weeks`);
+}
+
+export function fetchGames(leagueId: string, startDate: string, endDate: string) {
+  return request(`/admin/leagues/${leagueId}/fetch-games?startDate=${startDate}&endDate=${endDate}`);
+}
+
+export function adminCreateWeek(
+  leagueId: string,
+  data: { betManagerId: number; games: any[]; picksDeadline?: string }
+) {
+  return request(`/admin/leagues/${leagueId}/create-week`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function simulateResults(leagueId: string, results: { gameId: number; winner: string; finalScore?: string }[]) {
+  return request(`/admin/leagues/${leagueId}/simulate-results`, {
+    method: "POST",
+    body: JSON.stringify({ results }),
+  });
+}
+
+export function resolveWeek(leagueId: string) {
+  return request(`/admin/leagues/${leagueId}/resolve-week`, { method: "POST" });
+}
+
+export function advanceWeek(leagueId: string, data?: { startDate?: string; endDate?: string }) {
+  return request(`/admin/leagues/${leagueId}/advance-week`, {
+    method: "POST",
+    body: JSON.stringify(data || {}),
+  });
+}
+
+export function setRecords(leagueId: string, records: { teamName: string; wins: number; losses: number }[]) {
+  return request(`/admin/leagues/${leagueId}/set-records`, {
+    method: "POST",
+    body: JSON.stringify({ records }),
+  });
+}
+
+export function endSeason(leagueId: string) {
+  return request(`/admin/leagues/${leagueId}/end-season`, { method: "POST" });
+}
+
+export function newSeason(leagueId: string, season: number) {
+  return request(`/admin/leagues/${leagueId}/new-season`, {
+    method: "POST",
+    body: JSON.stringify({ season }),
+  });
+}
+
+export function resetConversations(leagueId: string) {
+  return request(`/admin/leagues/${leagueId}/reset-conversations`, { method: "POST" });
+}
+
+export function deleteWeek(leagueId: string, weekId: number) {
+  return request(`/admin/leagues/${leagueId}/weeks/${weekId}`, { method: "DELETE" });
+}
