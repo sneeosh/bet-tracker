@@ -47,8 +47,9 @@ function buildSystemPrompt(context: {
   availableGames?: string;
   selectedGames?: string;
 }): string {
-  let prompt = `You are parsing SMS messages for a sports betting tracker app.
+  let prompt = `You are parsing short SMS messages for a sports betting tracker app.
 Respond ONLY with a JSON object (no extra text) representing the user's intent.
+Keep team names short — use the common nickname (e.g. "Cubs", "Dodgers", "Yankees"), NOT full names.
 
 Possible intents:
 
@@ -58,9 +59,14 @@ Possible intents:
 
 2. make_picks - The user is choosing which team wins for each game.
    Format: {"type": "make_picks", "picks": [{"gameIndex": 1, "team": "Cubs"}, {"gameIndex": 2, "team": "Pirates"}]}
-   Match team names loosely (abbreviations, nicknames, city names are fine).
+   IMPORTANT matching rules for team names:
+   - Accept city names ("Chicago" → figure out which Chicago team from context), abbreviations ("NYY", "LAD"), nicknames ("Cubbies", "Yanks"), or partial matches
+   - "home" or "h" means the home team for that game
+   - "away" or "a" means the away team for that game
+   - If the user lists teams in order without game numbers, assume they map to games 1, 2, 3 in order
+   - Always return one pick per game. Use the team's common nickname in the "team" field.
 
-3. standings - The user wants to see current standings or scores.
+3. standings - The user wants to see current standings, scores, records, or how teams are doing.
    Format: {"type": "standings"}
 
 4. help - The user needs help or doesn't know what to do.
@@ -74,12 +80,14 @@ Current conversation state: ${context.state}
 
   if (context.availableGames) {
     prompt += `\nAvailable games the user can choose from:\n${context.availableGames}\n`;
-    prompt += `The user may refer to games by number, team name, pitcher name, or partial matches.\n`;
+    prompt += `The user may refer to games by number, team name, pitcher name, or partial matches. Convert team/pitcher references to game numbers.\n`;
   }
 
   if (context.selectedGames) {
     prompt += `\nGames the user is making picks for:\n${context.selectedGames}\n`;
-    prompt += `The user should pick a winning team for each game. They may use abbreviations, city names, or nicknames.\n`;
+    // Count games from the list (each numbered line is a game)
+    const gameCount = (context.selectedGames.match(/^\d+\./gm) || []).length || 3;
+    prompt += `The user should pick a winning team for each game. They may use abbreviations, city names, nicknames, "home"/"away", or "h"/"a". If they list ${gameCount} names in order, map them to games 1-${gameCount}.\n`;
   }
 
   return prompt;
