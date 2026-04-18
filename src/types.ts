@@ -103,10 +103,16 @@ export interface MlbGame {
   winner: string | null;
 }
 
-// AI parsing types
-export type SmsIntent =
-  | { type: 'pick_games'; games: number[] }
-  | { type: 'make_picks'; picks: { gameIndex: number; team: string }[] }
-  | { type: 'standings' }
-  | { type: 'help' }
-  | { type: 'unknown'; raw: string };
+// Tool-calling style assistant actions. The LLM sees the conversation context
+// and emits exactly one of these to drive the app. `reply` is a free-form
+// conversational response (clarifications, smalltalk, "not right now" replies).
+export type AssistantAction =
+  | { type: 'show_standings' }
+  | { type: 'show_games' }
+  | { type: 'show_my_picks' }
+  | { type: 'show_help' }
+  | { type: 'select_weekly_games'; games: number[] }
+  | { type: 'submit_picks'; picks: { gameIndex: number; team: string }[] }
+  | { type: 'reply'; message: string };
+
+export type ConversationState = 'idle' | 'picking_games' | 'making_picks';
