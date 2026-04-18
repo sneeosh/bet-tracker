@@ -1,18 +1,32 @@
-import type { Env, SmsIntent } from '../types';
+import type { Env, AssistantAction, ConversationState } from '../types';
 
 /**
- * Use Cloudflare Workers AI to parse an incoming SMS into a structured intent.
+ * Context passed to the LLM so it can decide what to do with an inbound SMS.
+ * The LLM has latitude to pick any authorized action, or to `reply` with a
+ * natural-language clarification / smalltalk response.
  */
-export async function parseMessage(
+export interface AssistantContext {
+  playerName: string;
+  playerTeam: string;
+  state: ConversationState;
+  /** Formatted numbered list of games the bet manager can choose from. */
+  availableGames?: string;
+  /** Formatted numbered list of games players are making picks on. */
+  selectedGames?: string;
+  /** True if the player has already submitted picks for the current week. */
+  hasSubmittedPicks?: boolean;
+}
+
+/**
+ * Ask the LLM to pick one authorized action (or a free-form conversational
+ * reply) in response to the user's message.
+ */
+export async function decideAction(
   env: Env,
+  ctx: AssistantContext,
   message: string,
-  context: {
-    state: string;
-    availableGames?: string;
-    selectedGames?: string;
-  },
-): Promise<SmsIntent> {
-  const systemPrompt = buildSystemPrompt(context);
+): Promise<AssistantAction> {
+  const systemPrompt = buildSystemPrompt(ctx);
 
   try {
     const response = await (env.AI as any).run('@cf/meta/llama-3.1-8b-instruct', {
@@ -22,121 +36,170 @@ export async function parseMessage(
       ],
     });
 
-    const text = typeof response === 'string'
-      ? response
-      : (response as { response?: string }).response ?? '';
+    const text =
+      typeof response === 'string'
+        ? response
+        : (response as { response?: string }).response ?? '';
 
-    // Extract JSON from the response (the model may wrap it in markdown fences)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return { type: 'unknown', raw: message };
+      return { type: 'reply', message: defaultClarification(ctx) };
     }
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    return validateIntent(parsed, message);
+    const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    return validateAction(parsed, ctx);
   } catch {
-    return { type: 'unknown', raw: message };
+    return { type: 'reply', message: defaultClarification(ctx) };
   }
 }
 
-/**
- * Build the system prompt for the AI model based on conversation state.
- */
-function buildSystemPrompt(context: {
-  state: string;
-  availableGames?: string;
-  selectedGames?: string;
-}): string {
-  let prompt = `You are parsing short SMS messages for a sports betting tracker app.
-Respond ONLY with a JSON object (no extra text) representing the user's intent.
-Keep team names short — use the common nickname (e.g. "Cubs", "Dodgers", "Yankees"), NOT full names.
+function buildSystemPrompt(ctx: AssistantContext): string {
+  const stateDescription: Record<ConversationState, string> = {
+    idle: 'Nothing is pending for this player right now.',
+    picking_games:
+      'This player is the bet manager this week. They owe the group a selection of exactly 3 games from the available list below.',
+    making_picks:
+      "This player owes picks for this week's selected games (one winning team per game).",
+  };
 
-Possible intents:
+  let prompt = `You are the SMS assistant for "Bet Tracker", an app where a group of friends compete on MLB picks.
+Talk like a helpful friend: warm, brief, casual. No emoji, no markdown.
 
-1. pick_games - The user wants to select which games to include this week.
-   Format: {"type": "pick_games", "games": [1, 3, 5]}
-   The numbers refer to game indices from the available list.
+PLAYER
+  name: ${ctx.playerName}
+  assigned team: ${ctx.playerTeam}
 
-2. make_picks - The user is choosing which team wins for each game.
-   Format: {"type": "make_picks", "picks": [{"gameIndex": 1, "team": "Cubs"}, {"gameIndex": 2, "team": "Pirates"}]}
-   IMPORTANT matching rules for team names:
-   - Accept city names ("Chicago" → figure out which Chicago team from context), abbreviations ("NYY", "LAD"), nicknames ("Cubbies", "Yanks"), or partial matches
-   - "home" or "h" means the home team for that game
-   - "away" or "a" means the away team for that game
-   - If the user lists teams in order without game numbers, assume they map to games 1, 2, 3 in order
-   - Always return one pick per game. Use the team's common nickname in the "team" field.
-
-3. standings - The user wants to see current standings, scores, records, or how teams are doing.
-   Format: {"type": "standings"}
-
-4. help - The user needs help or doesn't know what to do.
-   Format: {"type": "help"}
-
-5. unknown - You can't determine the intent.
-   Format: {"type": "unknown", "raw": "<original message>"}
-
-Current conversation state: ${context.state}
+CONVERSATION STATE: ${ctx.state}
+${stateDescription[ctx.state]}
 `;
 
-  if (context.availableGames) {
-    prompt += `\nAvailable games the user can choose from:\n${context.availableGames}\n`;
-    prompt += `The user may refer to games by number, team name, pitcher name, or partial matches. Convert team/pitcher references to game numbers.\n`;
+  if (ctx.hasSubmittedPicks) {
+    prompt += `This player has already submitted their picks for the week.\n`;
   }
 
-  if (context.selectedGames) {
-    prompt += `\nGames the user is making picks for:\n${context.selectedGames}\n`;
-    // Count games from the list (each numbered line is a game)
-    const gameCount = (context.selectedGames.match(/^\d+\./gm) || []).length || 3;
-    prompt += `The user should pick a winning team for each game. They may use abbreviations, city names, nicknames, "home"/"away", or "h"/"a". If they list ${gameCount} names in order, map them to games 1-${gameCount}.\n`;
+  if (ctx.availableGames) {
+    prompt += `\nAVAILABLE GAMES (the bet manager picks 3 of these):\n${ctx.availableGames}\n`;
   }
+  if (ctx.selectedGames) {
+    prompt += `\nTHIS WEEK'S GAMES (players pick a winner for each):\n${ctx.selectedGames}\n`;
+  }
+
+  prompt += `
+You must reply with EXACTLY ONE JSON object and nothing else. No prose, no markdown fences.
+Shape: {"type": "<action>", ...params}
+
+Authorized actions:
+
+1. {"type": "reply", "message": "<short reply>"}
+   Use when the user is chatting, saying thanks, asking something off-task, or when their
+   request is ambiguous and you need to ask a clarifying question. Keep "message" under 2
+   short sentences. This is your fallback whenever no other action fits cleanly.
+
+2. {"type": "show_standings"}
+   User wants to see standings, records, win/loss, over-under pace, leaderboard, "how we doing".
+
+3. {"type": "show_games"}
+   User wants to see this week's matchups / schedule / what games are up.
+
+4. {"type": "show_my_picks"}
+   User wants to see their own picks for the current week.
+
+5. {"type": "show_help"}
+   User is asking what they can do, for help, for commands, or seems lost.
+
+6. {"type": "select_weekly_games", "games": [<int>, <int>, <int>]}
+   ONLY valid when state is "picking_games". User is choosing exactly 3 games from the
+   AVAILABLE GAMES list. Numbers are the 1-based indices from that list. If the user
+   refers to a team, city, or pitcher, convert it to the matching game number. If they
+   give fewer than 3 or are ambiguous, use "reply" to ask which ones.
+
+7. {"type": "submit_picks", "picks": [{"gameIndex": <int>, "team": "<name>"}, ...]}
+   ONLY valid when state is "making_picks". User is choosing a winner for each of THIS
+   WEEK'S GAMES. gameIndex is 1-based from that list. For "team", pass one of:
+     - the team's common short name (e.g. "Cubs", "Dodgers", "Yankees")
+     - "home" or "away" (the app resolves these against the game)
+   If the user lists teams in order without numbering, map them to games 1..N in order.
+   Only include a pick if the user actually named a team for that game.
+
+Rules:
+- Exactly ONE action per turn.
+- Never invent picks, games, or teams the user didn't mention.
+- If an action isn't allowed in the current state (e.g. submit_picks while idle), use
+  "reply" with a brief, friendly explanation instead.
+- Users can ask for standings / games / help / their picks from ANY state — those read-only
+  actions don't interrupt a pending game-pick or pick-submission turn.
+- Output must be valid JSON. No commentary before or after.
+`;
 
   return prompt;
 }
 
+function defaultClarification(ctx: AssistantContext): string {
+  if (ctx.state === 'picking_games') {
+    return "Sorry, I didn't catch that. You're picking this week's 3 games — want me to resend the list?";
+  }
+  if (ctx.state === 'making_picks') {
+    return "Sorry, I didn't catch that. Who are you picking? You can reply with team names or 'home'/'away'.";
+  }
+  return "Sorry, I didn't catch that. Try asking for 'standings', 'games', 'my picks', or 'help'.";
+}
+
 /**
- * Validate and coerce a parsed JSON object into a proper SmsIntent.
+ * Coerce a parsed JSON blob from the LLM into a safe AssistantAction.
+ * Unknown / malformed shapes become a friendly `reply` asking for clarification.
  */
-function validateIntent(parsed: Record<string, unknown>, raw: string): SmsIntent {
+function validateAction(
+  parsed: Record<string, unknown>,
+  ctx: AssistantContext,
+): AssistantAction {
   switch (parsed.type) {
-    case 'pick_games': {
+    case 'show_standings':
+    case 'show_games':
+    case 'show_my_picks':
+    case 'show_help':
+      return { type: parsed.type };
+
+    case 'select_weekly_games': {
       const games = parsed.games;
       if (Array.isArray(games) && games.every((g) => typeof g === 'number')) {
-        return { type: 'pick_games', games: games as number[] };
+        return { type: 'select_weekly_games', games: games as number[] };
       }
-      return { type: 'unknown', raw };
+      return { type: 'reply', message: defaultClarification(ctx) };
     }
 
-    case 'make_picks': {
+    case 'submit_picks': {
       const picks = parsed.picks;
       if (
         Array.isArray(picks) &&
         picks.every(
           (p) =>
+            p &&
             typeof p === 'object' &&
-            p !== null &&
             typeof (p as Record<string, unknown>).gameIndex === 'number' &&
             typeof (p as Record<string, unknown>).team === 'string',
         )
       ) {
         return {
-          type: 'make_picks',
+          type: 'submit_picks',
           picks: (picks as { gameIndex: number; team: string }[]).map((p) => ({
             gameIndex: p.gameIndex,
             team: p.team,
           })),
         };
       }
-      return { type: 'unknown', raw };
+      return { type: 'reply', message: defaultClarification(ctx) };
     }
 
-    case 'standings':
-      return { type: 'standings' };
-
-    case 'help':
-      return { type: 'help' };
+    case 'reply': {
+      const message = parsed.message;
+      if (typeof message === 'string' && message.trim().length > 0) {
+        return { type: 'reply', message: message.trim() };
+      }
+      return { type: 'reply', message: defaultClarification(ctx) };
+    }
 
     default:
-      return { type: 'unknown', raw };
+      return { type: 'reply', message: defaultClarification(ctx) };
   }
 }
 
